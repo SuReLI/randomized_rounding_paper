@@ -144,4 +144,4 @@ ax = fig.gca()
 for algorithm_name in tested_algorithms:
     plt.plot(abscisse, results_dict[algorithm_name][1], label=algorithm_name+"_c_time", color=colors[algorithm_name])
 ax.legend()
-    plt.show()
+plt.show()

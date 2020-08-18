@@ -4,7 +4,7 @@ import numpy as np
 import time
 import gurobipy
 
-from mcnf_continuous import gurobi_congestion_solver, gurobi_overload_sum_solver, create_arc_path_model, run_arc_path_model
+from mcnf_continuous import gurobi_congestion_solver, gurobi_overload_sum_solver
 
 
 def gurobi_unsplittable_flows(graph, commodity_list, verbose=0, time_limit=None):

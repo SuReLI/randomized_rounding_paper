@@ -2,6 +2,7 @@
 
 This directory the code and the datasets used in the paper : Randomized rounding algorithms for large scale unsplittable flow problems.
 It contains all the presented algorithm, functions to create the instances and already created datasets.
+The code in this directory is Python3 code. A gurobi license is mandatory to use most of the solvers. The instances are stored using the pickle module of python.
 
 create_and_store_instances.py
 Contains functions to generate a custom dataset of instances

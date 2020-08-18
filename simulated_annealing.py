@@ -21,7 +21,7 @@ def annealing_unsplittable_flows(graph, commodity_list, commodity_path_list=None
     solution = []
     fitness = 0
     for commodity_index, commodity in enumerate(commodity_list):
-        new_path = get_new_path_2(graph, use_graph, commodity, all_distances, T=3)
+        new_path = get_new_path(graph, use_graph, commodity, all_distances, T=3)
         if commodity_path_list is not None :
             new_path = commodity_path_list[commodity_index]
         solution.append(new_path)

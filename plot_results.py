@@ -77,7 +77,7 @@ def plot_dataset(global_path, dataset_name, abscisse):
     for algorithm_name in result_dict:
         temp_dict = {}
         for instance_name in result_dict[algorithm_name]:
-            size = int(instance_name.split('_')[2])
+            size = int(instance_name.split('_')[1])
             if size not in temp_dict:
                 temp_dict[size] = []
             temp_dict[size].extend(result_dict[algorithm_name][instance_name])
@@ -107,7 +107,7 @@ def plot_dataset(global_path, dataset_name, abscisse):
 if __name__ == "__main__":
     global_path = None
     assert global_path, "Complete global_path with the path to the main directory"
-    dataset_name = "commodity_scaling_dataset"
+    dataset_name = "graph_scaling_dataset"
     # abscisse = [422.4, 843.0, 1597.0, 2410.2, 3766.3, 5747.9, 8243.5, 11874.7, 18992.1, 26952.5]
     abscisse = "nb_nodes"
     plot_dataset(global_path, dataset_name, abscisse)
