@@ -4,7 +4,7 @@ import numpy as np
 import time
 
 
-def generate_instance(graph_type, graph_generator_inputs, random_filling_of_origins=True, random_paths=True, max_demand=1500, delete_resuidal_capacity=False):
+def generate_instance(graph_type, graph_generator_inputs, demand_generator_inputs):
     # this function generates an intances according to the asked caracteristics :
     # - first a graph is generated : a grid graph or a random graph
     # - then commodities are created so that there exist a solution
@@ -17,23 +17,23 @@ def generate_instance(graph_type, graph_generator_inputs, random_filling_of_orig
     elif graph_type == "random_connected":
         reverse_graph_generator = generate_random_connected_reverse_graph
     else:
-        print("No generator for this type of graph is implemented, check your spelling or contribute")
+        assert False, "No generator for this type of graph is implemented, check your spelling or contribute"
 
-    # Graph generation
+    # graph generation
     reverse_graph, is_origin_list = reverse_graph_generator(*graph_generator_inputs)
+    origin_list = [node for node, is_origin in enumerate(is_origin_list) if is_origin]
 
-    # Commodities generation
-    commodity_list, commodity_path_list = generate_demand(is_origin_list, reverse_graph, random_filling_of_origins, random_paths, max_demand, delete_resuidal_capacity=delete_resuidal_capacity)
+    # commodities generation
+    commodity_list, path_list = generate_demand(is_origin_list, reverse_graph, **demand_generator_inputs)
 
-    # The created graph was reversed so we reverse it
+    # the created graph was reversed so we reverse it
     graph = [{neighbor : reverse_graph[neighbor][node] for neighbor in range(len(reverse_graph)) if node in reverse_graph[neighbor]} for node in range(len(reverse_graph))]
 
-    return graph, commodity_list, commodity_path_list
+    return graph, commodity_list, path_list, origin_list
 
 def generate_grid_reverse_graph(nb_origins, nb_row_grid, nb_column_grid, nb_origin_connections, grid_link_capacity=15000, other_link_capacity=10000, local_connection_of_origin = False):
     # generates a grid graph with additional nodes conected to the grid and uniform capacities
     # the graph is reversed
-    # also creates a list of origins
 
     reverse_graph = []
 
@@ -48,7 +48,7 @@ def generate_grid_reverse_graph(nb_origins, nb_row_grid, nb_column_grid, nb_orig
              reverse_graph[i + nb_row_grid * j][i + nb_row_grid * ((j+1)%nb_column_grid)] = grid_link_capacity
              reverse_graph[i + nb_row_grid * j][i + nb_row_grid * ((j-1)%nb_column_grid)] = grid_link_capacity
 
-    # adding the additional nodes (the origins)
+    # adding the additional nodes (the origins, i.e. the gateways/pops)
     if local_connection_of_origin:
         for d in range(nb_origins):
             origin = d + nb_row_grid * nb_column_grid
@@ -75,13 +75,14 @@ def generate_grid_reverse_graph(nb_origins, nb_row_grid, nb_column_grid, nb_orig
 
     return reverse_graph, is_origin_list
 
-def generate_random_reverse_graph(nb_nodes, edge_proba, origin_proba, arc_capacity):
+def generate_random_reverse_graph(nb_nodes, edge_proba, nb_origins, arc_capacity):
     # generates a random graph with uniform capacities
     # the graph is reversed
-    # also creates a list of origins
 
     reverse_graph = [{} for i in range(nb_nodes)]
-    is_origin_list = [random.random() < origin_proba for i in range(nb_nodes)]
+    is_origin_list = [0]*nb_nodes
+    for node in np.random.choice(nb_nodes, nb_origins, replace=False):
+        is_origin_list[node] = 1
 
     for node in range(nb_nodes):
         for neighbor in range(nb_nodes):
@@ -90,18 +91,18 @@ def generate_random_reverse_graph(nb_nodes, edge_proba, origin_proba, arc_capaci
 
     return reverse_graph, is_origin_list
 
-def generate_random_connected_reverse_graph(nb_nodes, edge_proba, origin_proba, arc_capacity):
+def generate_random_connected_reverse_graph(nb_nodes, edge_proba, nb_origins, arc_capacity):
     # generates a random graph with uniform capacities
     # the graph is reversed
-    # also creates a list of origins
-    # the returned graph is always connected
+    # the returned graph is always strongly connected
 
     reverse_graph = [{} for i in range(nb_nodes)]
-    is_origin_list = [random.random() < origin_proba for i in range(nb_nodes)]
+    is_origin_list = [0]*nb_nodes
+    for node in np.random.choice(nb_nodes, nb_origins, replace=False):
+        is_origin_list[node] = 1
 
     not_root_set = set(range(nb_nodes))
 
-    # Add arcs to the graph until it becomes strongly connected
     while len(not_root_set) > 0:
         initial_node = random.choice(tuple(not_root_set))
         reachable = [False]*nb_nodes
@@ -122,7 +123,6 @@ def generate_random_connected_reverse_graph(nb_nodes, edge_proba, origin_proba, 
             chosen_node = random.choice(unreachable_nodes)
             reverse_graph[initial_node][chosen_node] = arc_capacity
 
-    # Complete with random arcs to obtain a predefined arc density
     current_nb_edge = sum([len(d) for d in reverse_graph])
     edge_proba -= current_nb_edge / (nb_nodes**2 - nb_nodes)
     for node in range(nb_nodes):
@@ -132,15 +132,16 @@ def generate_random_connected_reverse_graph(nb_nodes, edge_proba, origin_proba, 
 
     return reverse_graph, is_origin_list
 
-def generate_demand(is_origin_list, reverse_graph, random_filling_of_origins=True, random_paths=True, max_demand=1500, delete_resuidal_capacity=False):
+def generate_demand(is_origin_list, reverse_graph, random_filling_of_origins=True, random_paths=True, max_demand=1500, delete_resuidal_capacity=False,
+                    smaller_commodities=False, verbose=0):
     # generates the commodities so that there exist a solution
     # To create one commodity :
     # a random node is chosen, all the origins attainable from the node are computed
     # one is randomly chosen with a random path to it, create a commodity demand that can fit on the path
 
-    residual_graph = [{neigh : reverse_graph[node][neigh] for neigh in reverse_graph[node]} for node in range(len(reverse_graph))]
+    residual_graph = [{neighbor : reverse_graph[node][neighbor] for neighbor in reverse_graph[node]} for node in range(len(reverse_graph))]
     commodity_list = []
-    commodity_path_list = []
+    path_list = []
     possible_destination_nodes = 1 - np.array(is_origin_list)
 
     i = 0
@@ -157,17 +158,21 @@ def generate_demand(is_origin_list, reverse_graph, random_filling_of_origins=Tru
         # raising the failure when no origin is attainable
         if origin_list == []:
             possible_destination_nodes[destination] = 0
-
             if sum(possible_destination_nodes) == 0:
+                if verbose:
+                    print()
+                    print("residual value is ",sum([sum(dct.values()) for dct in residual_graph]))
+                    print("full value is ",sum([sum(dct.values()) for dct in reverse_graph]))
+
                 if delete_resuidal_capacity:
                     for node, neighbor_dict in enumerate(reverse_graph):
                         reverse_graph[node] = {neighbor : neighbor_dict[neighbor] - residual_graph[node][neighbor] for neighbor in neighbor_dict}
-                return commodity_list, commodity_path_list
 
+                return commodity_list, path_list
             else:
                 continue
 
-        # chossing an origin
+        # choosing an origin
         if random_filling_of_origins:
             origin, path = origin_list[random.randint(0, len(origin_list)-1)]
         else:
@@ -175,14 +180,18 @@ def generate_demand(is_origin_list, reverse_graph, random_filling_of_origins=Tru
 
         # allocating the commodity in the graph
         min_remaining_capacity = min([residual_graph[path[node_index]][path[node_index+1]] for node_index in range(len(path)-1)])
-        used_capacity = min(min_remaining_capacity, random.randint(1, max_demand))
-        
+
+        if smaller_commodities:
+            used_capacity = random.randint(1, min(min_remaining_capacity, max_demand))
+        else:
+            used_capacity = min(min_remaining_capacity, random.randint(1, max_demand))
+
         for node_index in range(len(path)-1):
             residual_graph[path[node_index]][path[node_index+1]] -= used_capacity
 
         commodity_list.append((origin, destination, used_capacity))
         path.reverse()
-        commodity_path_list.append(path)
+        path_list.append(path)
 
 
 
@@ -210,38 +219,3 @@ def get_availables_origins(residual_graph, initial_node, is_origin_list, random_
                     pile.append((neighbor, path + [neighbor]))
 
     return origin_list
-
-
-def mutate_instance(graph, commodity_list, origin_list, mutation_rate=0.03):
-    # function that changes some destinations of the commodities  and some connections of the origins
-    nb_nodes = len(graph)
-
-    i = 0
-    for origin, destination, demand in commodity_list:
-        if random.random() < mutation_rate:
-            neighbor_list = list(graph[destination].keys())
-            new_destination = np.random.choice(neighbor_list)
-        else:
-            new_destination = destination
-
-        commodity_list[i] = (origin, new_destination, demand)
-        i += 1
-
-    for origin in origin_list:
-        for neighbor in list(graph[origin].keys()):
-            if random.random() < mutation_rate:
-                neighbor_list = list(graph[neighbor].keys())
-                possible_neighbor_list = [neighbor  for neighbor in neighbor_list if neighbor not in graph[origin]]
-                if possible_neighbor_list == []:
-                    new_neighbor = neighbor
-                else:
-                    new_neighbor = np.random.choice(possible_neighbor_list)
-                capacity = graph[origin].pop(neighbor)
-                graph[origin][new_neighbor] = capacity
-
-
-if __name__ == "__main__":
-    temp = time.time()
-    n = 10000
-    generate_random_connected_reverse_graph(n, 10/n, 0.1)
-    print(time.time() - temp)

@@ -61,24 +61,24 @@ def find_fitting_most_capacited_path(graph1, graph2, origin, destination, minimu
     priority_q = [(-10.**10, origin, None)]
 
     parent_list = [None] * len(graph1)
-    visited = [0]*len(graph1)
+    visited = [False]*len(graph1)
     best_capacity = [None] * len(graph1)
-
 
     while priority_q != []:
         c, current_node, parent_node = hp.heappop(priority_q)
         capa_of_current_node = -c
-        if visited[current_node]: continue
-        visited[current_node] = 1
-        parent_list[current_node] = parent_node
-        best_capacity[current_node] = capa_of_current_node
 
-        if current_node == destination:
-            break
+        if not visited[current_node]:
+            visited[current_node] = True
+            parent_list[current_node] = parent_node
+            best_capacity[current_node] = capa_of_current_node
 
-        for neighbor in graph1[current_node]:
-            if not visited[neighbor] and graph2[current_node][neighbor] >= minimum_capacity:
-                hp.heappush(priority_q, (-min(capa_of_current_node, graph1[current_node][neighbor]), neighbor, current_node))
+            if current_node == destination:
+                break
+
+            for neighbor in graph1[current_node]:
+                if not visited[neighbor] and graph2[current_node][neighbor] >= minimum_capacity:
+                    hp.heappush(priority_q, (-min(capa_of_current_node, graph1[current_node][neighbor]), neighbor, current_node))
 
     if parent_list[destination] is None:
         return None, None
@@ -257,7 +257,6 @@ def dijkstra(graph, intial_node, destination_node=None):
     return parent_list, distances
 
 
-
 def update_graph_capacity(graph, path, demand, reverse_graph=False):
     overload = 0
 
@@ -272,3 +271,27 @@ def update_graph_capacity(graph, path, demand, reverse_graph=False):
         overload += max(0, min(-graph[node][neighbor], demand))
 
     return overload
+
+
+def is_strongly_connected(graph):
+    nb_nodes = len(graph)
+
+    for initial_node in range(nb_nodes):
+        reachable = [False]*nb_nodes
+        reachable[initial_node] = True
+        pile = [initial_node]
+        nb_reachable = 1
+
+        while pile:
+            current_node = pile.pop()
+            for neighbor in graph[current_node]:
+                if not reachable[neighbor]:
+                    reachable[neighbor] = True
+                    pile.append(neighbor)
+                    nb_reachable += 1
+
+        if nb_reachable < nb_nodes:
+            print(nb_reachable, nb_nodes)
+            return False
+
+    return True

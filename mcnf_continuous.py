@@ -1,10 +1,14 @@
-import random
 import numpy as np
+import random
+import time
+import heapq as hp
 import gurobipy
+
+from mcnf_heuristics import find_fitting_most_capacited_path, compute_all_shortest_path
 
 
 def gurobi_overload_sum_solver(graph, commodity_list, use_graph=None, flow_upper_bound_graph=None, verbose=0, proof_constaint=False, return_model=False):
-    # LP program that solves the multicommodity flow problem with the following objective function : minimize the sum of the arcs overload
+    # LP program that solves the multicommodity flow problem with the following objective function : minimize the sum of the arc_list overload
 
     nb_nodes = len(graph)
     nb_commodities = len(commodity_list)
@@ -25,34 +29,35 @@ def gurobi_overload_sum_solver(graph, commodity_list, use_graph=None, flow_upper
 
         super_commodity_dict[origin][destination] += demand
 
-    arcs = [(node, neighbor) for node in range(nb_nodes) for neighbor in graph[node]]
-    capacities = [graph[node][neighbor] for node, neighbor in arcs]
+    arc_list = [(node, neighbor) for node in range(nb_nodes) for neighbor in graph[node]]
+    capacities = [graph[node][neighbor] for node, neighbor in arc_list]
     commodities = super_commodity_dict.keys()
 
     # Create optimization model
     model = gurobipy.Model('netflow')
     model.modelSense = gurobipy.GRB.MINIMIZE
-    model.Params.OutputFlag = verbose
+    model.Params.OutputFlag = verbose>1
 
     # Create variables
-    flow_var = model.addVars(commodities, arcs, obj=0*10**-4, name="flow_var") # flow variables
-    overload_var = model.addVars(arcs, obj=1, name="overload_var") # overload variables : we want to minimize their sum
+    flow_var = model.addVars(commodities, arc_list, obj=0, name="flow_var") # flow variables
+    overload_var = model.addVars(arc_list, obj=1, name="overload_var") # overload variables : we want to minimize their sum
 
     # Arc capacity constraints :
-    model.addConstrs((flow_var.sum('*',node,neighbor) + use_graph[node][neighbor] <= graph[node][neighbor] + overload_var[(node, neighbor)] for node,neighbor in arcs), "cap")
+    capacity_constraint_dict = model.addConstrs((flow_var.sum('*', node, neighbor) + use_graph[node][neighbor] - overload_var[node, neighbor] <= graph[node][neighbor] for node, neighbor in arc_list), "cap")
     if proof_constaint:
-        model.addConstrs(flow_var.sum('*',node,neighbor) <= flow_upper_bound_graph[node][neighbor] for node, neighbor in arcs)
+        model.addConstrs(flow_var.sum('*', node, neighbor) <= flow_upper_bound_graph[node][neighbor] for node, neighbor in arc_list)
 
     # Flow conservation constraints
     for origin in super_commodity_dict:
         for node in range(nb_nodes):
 
+            rhs = 0
+
+            if node == origin:
+                rhs += sum(super_commodity_dict[origin].values())
+
             if node in super_commodity_dict[origin]:
-                rhs = -super_commodity_dict[origin][node]
-            elif node == origin:
-                rhs = sum(super_commodity_dict[origin].values())
-            else:
-                rhs = 0
+                rhs += -super_commodity_dict[origin][node]
 
             model.addConstr((flow_var.sum(origin,node,'*') - flow_var.sum(origin,'*',node) == rhs), "node{}_{}".format(node, origin))
 
@@ -63,6 +68,7 @@ def gurobi_overload_sum_solver(graph, commodity_list, use_graph=None, flow_upper
 
     # Launching the model
     model.optimize()
+
 
     # Getting the results from the solver : the allocation of each super commodity and the total necessary capacity
     if model.status == gurobipy.GRB.Status.OPTIMAL:
@@ -77,7 +83,7 @@ def gurobi_overload_sum_solver(graph, commodity_list, use_graph=None, flow_upper
         flow_values = model.getAttr('x', flow_var)
         for origin in super_commodity_dict:
             allocation_graph = [{} for node in range(nb_nodes)]
-            for node,neighbor in arcs:
+            for node,neighbor in arc_list:
                 allocation_graph[node][neighbor] = flow_values[origin,node,neighbor]
             allocation_graph_per_origin[origin] = allocation_graph
 
@@ -87,7 +93,7 @@ def gurobi_overload_sum_solver(graph, commodity_list, use_graph=None, flow_upper
         print("Solver exit status : ", model.status)
 
 
-def gurobi_congestion_solver(graph, commodity_list, use_graph=None, flow_upper_bound_graph=None, verbose=0, proof_constaint=False, return_model=False):
+def gurobi_congestion_solver(graph, commodity_list, use_graph=None, flow_upper_bound_graph=None, verbose=0, proof_constaint=False, return_model=False, second_objective=False):
     # LP program that solves the multicommodity flow problem with the following objective function : minimize the maximum arc overload (i.e. the congestion)
 
     nb_nodes = len(graph)
@@ -109,8 +115,8 @@ def gurobi_congestion_solver(graph, commodity_list, use_graph=None, flow_upper_b
 
         super_commodity_dict[origin][destination] += demand
 
-    arcs = [(node, neighbor) for node in range(nb_nodes) for neighbor in graph[node]]
-    capacities = [graph[node][neighbor] for node, neighbor in arcs]
+    arc_list = [(node, neighbor) for node in range(nb_nodes) for neighbor in graph[node]]
+    capacities = [graph[node][neighbor] for node, neighbor in arc_list]
     commodities = super_commodity_dict.keys()
 
     # Create optimization model
@@ -119,28 +125,30 @@ def gurobi_congestion_solver(graph, commodity_list, use_graph=None, flow_upper_b
     model.Params.OutputFlag = verbose
 
     # Create variables
-    flow_var = model.addVars(commodities, arcs, obj=0, name="flow_var") # flow variables
+    flow_var = model.addVars(commodities, arc_list, obj=0, name="flow_var") # flow variables
     overload_var = model.addVar(obj=1, name="overload_var") # overload variable
-    overload_var_sum = model.addVars(arcs, obj=0, name="overload_var") # overload variables : we want to minimize their sum
 
-    model.setObjectiveN(sum(overload_var_sum.values()),1)
+    if second_objective:
+        overload_var_sum = model.addVars(arc_list, obj=0, name="overload_var") # overload variables : we want to minimize their sum
+        model.setObjectiveN(sum(overload_var_sum.values()),1)
+        model.addConstrs((flow_var.sum('*',node,neighbor) + use_graph[node][neighbor] <= graph[node][neighbor] * (1 + overload_var_sum[(node, neighbor)]) for node,neighbor in arc_list), "cap")
 
     # Arc capacity constraints :
-    model.addConstrs((flow_var.sum('*',node,neighbor) + use_graph[node][neighbor] <= graph[node][neighbor]* (1 + overload_var_sum[(node, neighbor)]) for node,neighbor in arcs), "cap")
-    model.addConstrs((flow_var.sum('*',node,neighbor) + use_graph[node][neighbor] <= graph[node][neighbor] * overload_var for node,neighbor in arcs), "cap")
+    model.addConstrs((flow_var.sum('*',node,neighbor) + use_graph[node][neighbor] <= graph[node][neighbor] * overload_var for node,neighbor in arc_list), "cap")
     if proof_constaint:
-        model.addConstrs(flow_var.sum('*',node,neighbor) <= flow_upper_bound_graph[node][neighbor] for node, neighbor in arcs)
+        model.addConstrs(flow_var.sum('*',node,neighbor) <= flow_upper_bound_graph[node][neighbor] for node, neighbor in arc_list)
 
     # Flow conservation constraints
     for origin in super_commodity_dict:
         for node in range(nb_nodes):
 
+            rhs = 0
+
+            if node == origin:
+                rhs += sum(super_commodity_dict[origin].values())
+
             if node in super_commodity_dict[origin]:
-                rhs = -super_commodity_dict[origin][node]
-            elif node == origin:
-                rhs = sum(super_commodity_dict[origin].values())
-            else:
-                rhs = 0
+                rhs += -super_commodity_dict[origin][node]
 
             model.addConstr((flow_var.sum(origin,node,'*') - flow_var.sum(origin,'*',node) == rhs), "node{}_{}".format(node, origin))
 
@@ -165,7 +173,7 @@ def gurobi_congestion_solver(graph, commodity_list, use_graph=None, flow_upper_b
         flow_values = model.getAttr('x', flow_var)
         for origin in super_commodity_dict:
             allocation_graph = [{} for node in range(nb_nodes)]
-            for node,neighbor in arcs:
+            for node,neighbor in arc_list:
                 allocation_graph[node][neighbor] = flow_values[origin,node,neighbor]
             allocation_graph_per_origin[origin] = allocation_graph
 
